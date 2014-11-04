@@ -1,0 +1,338 @@
+var marker;
+var map;
+
+function handlePositioningFailure()
+{
+	// default location if positioning fails
+	//alert("Paikannus ei onnistunut. Ole hyvä ja valitse sijaintisi kartalta.");
+	//jQuery("#loading").hide();
+}
+
+function initialize()
+{
+	var mapstyles = [
+      	{
+    		featureType: 'water',
+    		stylers: [{color:'#46bcec'},{visibility:'on'}]
+    	},{
+    		featureType: 'landscape',
+    		stylers: [{color:'#f2f2f2'}]
+    	},{
+    		featureType: 'road',
+    		stylers: [{saturation: -100},{lightness: 45}]
+    	},{
+    		featureType: 'road.highway',
+    		stylers: [{visibility: 'simplified'}]
+    	},{
+    		featureType: 'road.arterial',
+    		elementType: 'labels.icon',
+    		stylers: [{visibility: 'off'}]
+    	},{
+    		featureType: 'administrative',
+    		elementType: 'labels.text.fill',
+    		stylers: [{color: '#444444'}]
+    	},{
+    		featureType: 'transit',
+    		stylers: [{visibility: 'off'}]
+    	},{
+    		featureType: 'poi',
+    		stylers: [{visibility: 'off'}]
+    	}
+    ];
+	var mapOptions = {
+			zoom: 4,
+			center: new google.maps.LatLng(65.5857,27.583),
+			mapTypeId: google.maps.MapTypeId.ROADMAP,
+			disableDefaultUI: true,
+			styles: mapstyles
+
+	};
+
+	map = new google.maps.Map(document.getElementById('map'), mapOptions);
+
+	// Try HTML5 geolocation
+	if(navigator.geolocation)
+	{
+		navigator.geolocation.getCurrentPosition(function(position)
+		{
+			var pos = new google.maps.LatLng(position.coords.latitude, position.coords.longitude);
+			placeMarker(pos, map);
+			map.setCenter(pos);
+			map.setZoom(13);
+			
+		}, function()
+		{
+			handlePositioningFailure();
+		}, { enableHighAccuracy: true, timeout: 3000 });
+	}
+	else
+	{
+		// Browser doesn't support Geolocation
+		handlePositioningFailure();
+	}
+
+	google.maps.event.addListener(map, 'click', function(e)
+	{			
+		$(".box-row").empty();
+		$(".box-row").html("<img src='img/loading.gif' />");
+		placeMarker(e.latLng, map);
+	});
+}
+
+
+function offsetCenter(latlng,offsetx,offsety) 
+{
+
+	// latlng is the apparent centre-point
+	// offsetx is the distance you want that point to move to the right, in pixels
+	// offsety is the distance you want that point to move upwards, in pixels
+	// offset can be negative
+	// offsetx and offsety are both optional
+
+	var scale = Math.pow(2, map.getZoom());
+	var nw = new google.maps.LatLng(
+	    map.getBounds().getNorthEast().lat(),
+	    map.getBounds().getSouthWest().lng()
+	);
+
+	var worldCoordinateCenter = map.getProjection().fromLatLngToPoint(latlng);
+	var pixelOffset = new google.maps.Point((offsetx/scale) || 0,(offsety/scale) ||0)
+
+	var worldCoordinateNewCenter = new google.maps.Point(
+	    worldCoordinateCenter.x - pixelOffset.x,
+	    worldCoordinateCenter.y + pixelOffset.y
+	);
+
+	var newCenter = map.getProjection().fromPointToLatLng(worldCoordinateNewCenter);
+
+	map.setCenter(newCenter);
+}
+
+function placeMarker(location, map)
+{
+	if (marker)
+	{
+		//if marker already was created change positon
+		marker.setPosition(location);
+	}
+	else
+	{
+		//create a marker
+		marker = new google.maps.Marker({
+			position: location,
+			map: map,
+			draggable: true
+		});
+	}
+	map.panTo(location);
+
+	var latlon = location.toUrlValue().split(",");
+	var params = ["2t", "ws", "wd", "msl", "r"];
+	var items = {};
+	var timesteps = 4;
+	var index;
+	var len = params.length;
+	var param;
+	var i = 0;
+	var t2m_count = 1;
+	var ws_count = 1;
+	var wd_count = 1;
+	var msl_count = 1;
+	var r_count = 1;
+	var time;
+	$.each(params, function(index, param)
+	{
+		var apiquery = "http://172.245.202.204/api.php?x="+latlon[0]+"&y="+latlon[1]+"&p="+param+"&format=json";
+		$.ajax({
+			  url: apiquery,
+			  async: true
+		}).done(function(data) 
+		{
+			if(data.indexOf('ERROR') > -1)
+			{
+				console.log(data+apiquery);
+				items["error"] = "ERROR: Could not get the location. Please point your location on the map or reload the page.";
+			}
+			else
+			{
+				i = 0;
+				$.each($.parseJSON(data), function(time, val)
+				{
+					if(i < timesteps)
+					{
+						if(items[time] === undefined)
+						{
+							items[time] = {};
+						}
+						if(param == "2t")
+						{
+							value = Math.round(val.value - 273.15);
+							items[time].t2m = value;
+							t2m_count++;
+						}
+						else if(param == "ws")
+						{
+							value = Math.round(val.value);
+							items[time].ws = value;
+							ws_count++;
+						}
+						else if(param == "wd")
+						{
+							value = Math.round(val.value);
+							items[time].wd = value;
+							wd_count++;
+						}
+						else if(param == "msl")
+						{
+							value = Math.round(val.value/100);
+							items[time].msl = value;
+							msl_count++;
+						}
+						else if(param == "r")
+						{
+							value = Math.round(val.value);
+							items[time].r = value;
+							r_count++;
+						}
+						i++;
+					}
+				});
+			}
+			if(
+				t2m_count === len &&
+				ws_count === len &&
+				wd_count === len &&
+				msl_count === len &&
+				r_count === len
+				)
+			{
+				placeValues(map, items, latlon[0], latlon[1]);
+			}
+		});
+		
+	});
+	
+} 
+function countProperties(obj) {
+    var count = 0;
+
+    for(var prop in obj) {
+        if(obj.hasOwnProperty(prop))
+            ++count;
+    }
+
+    return count;
+}
+//Function to sort
+function returnSortedJsonObject(obj)
+{
+	var keys = [];
+	for (var key in obj) {
+		keys.push(key);
+	}
+	keys.sort();
+	var tempObj = new Object();
+
+	for (var i = 0; i < keys.length; i++) {
+		for (var key in obj) {
+			if (keys[i] == key) {
+				if (typeof obj[key] == 'object')
+					obj[key] = returnSortedJsonObject(obj[key]);
+				tempObj[key] = obj[key];
+			}
+		}
+	}
+	return tempObj;
+}
+
+function placeValues(map, values, lat, lon)
+{	
+	offsetCenter(map.getCenter(), 0, -($(window).height() / 4));
+	
+	console.log(values)
+	j = 0;
+	var array = returnSortedJsonObject(values);
+	$.each(array, function(t, p)
+	{
+		console.log(p);
+		y = t.substr(0, 4);
+		m = t.substr(4, 2);
+		d = t.substr(6, 2);
+		h = t.substr(8, 2);
+		i = t.substr(10, 2);
+
+		var d = new Date(y, (parseInt(m) - 1), parseInt(d), parseInt(h), parseInt(i), 0);
+
+		var weekday = new Array(7);
+		weekday[0]=  "Sun";
+		weekday[1] = "Mon";
+		weekday[2] = "Tue";
+		weekday[3] = "Wed";
+		weekday[4] = "Thu";
+		weekday[5] = "Fri";
+		weekday[6] = "Sat";
+		
+		var t2m = p.t2m;
+		var ws = p.ws+"&nbsp;m/s";
+		var wd = directionToSymbolName(p.wd, p.ws);
+		var pres = p.msl+"&nbsp;hPa";
+		var r = p.r+"&nbsp;%";
+		if(j > 0)
+		{
+			pres = "";
+			r = "";
+		}
+		if(t2m > 0)
+		{
+			t2m = "+"+t2m;
+		}
+		t2m = t2m+"&nbsp;Â°C";
+		
+		var n = weekday[d.getDay()]; 
+		$("#box"+j).html(n+" "+h+":00<br/>"+t2m+" "+ws+" <img src='img/wind/"+wd+".png' /> "+pres+" "+r);
+		j++;
+	});
+	var latitude = (Math.round((lat * 1000)/10)/100).toFixed(2);
+	var longitude = (Math.round((lon * 1000)/10)/100).toFixed(2);
+	$("#box0").append("<br/>lat: "+latitude+" lon: "+longitude);
+}
+
+function directionToSymbolName(wd, ws)
+{
+	var d;
+	var f;
+	var dirs = {};
+    // Simplify the wind speed and direction
+	if(wd !== undefined)
+	{
+		d = Math.floor((wd % 360 + 22.5) / 45) * 45;
+		d = "_"+d;
+	}
+	else
+	{
+		d = "vrb";
+	}
+	if(ws !== undefined)
+	{
+		f = Math.round(ws);
+	}
+	else
+	{
+		f = "-";
+	}
+	if(f == 0)
+	{
+		d = "vrb";
+	}
+    var dirs = {'_0' : 'n',
+        '_45' : 'ne',
+        '_90' : 'e',
+        '_135' : 'se',
+        '_180' : 's',
+        '_225' : 'sw',
+        '_270' : 'w',
+        '_315' : 'nw',
+        '_360' : 'n',
+        'vrb' : 'vrb'};
+    return dirs[d];
+}
